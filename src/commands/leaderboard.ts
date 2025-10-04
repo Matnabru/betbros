@@ -29,9 +29,19 @@ module.exports = {
     });
     usersWithTotals.sort((a, b) => b.total - a.total);
     const topUsers = usersWithTotals.slice(0, 10);
+    // Fetch nicknames from Discord guild
+    const nicknames = await Promise.all(topUsers.map(async (u) => {
+      try {
+        const member = await interaction.guild?.members.fetch(u.userId);
+        return member ? member.displayName : `Unknown (${u.userId})`;
+      } catch {
+        return `Unknown (${u.userId})`;
+      }
+    }));
     let desc = topUsers.map((u, i) => {
-      return `#${i + 1} <@${u.userId}> — **${u.total}** ${u.locked > 0 ? ` (**${u.locked}**)` : ''}`;
+      const nickname = nicknames[i];
+      return `#${i + 1} ${nickname} — **${u.total}**${u.locked > 0 ? ` (**${u.locked}**)` : ''}`;
     }).join('\n');
-    await interaction.reply({ content: `**Leaderboard:**\n              **Total** (In bets)\n${desc}` });
+    await interaction.reply({ content: `**Leaderboard:** **Total** (In bets)\n${desc}` });
   },
 };
