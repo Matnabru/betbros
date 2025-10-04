@@ -1,5 +1,7 @@
-
 import fetch from 'node-fetch';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 export interface SofaScoreMatch {
   league: string;
@@ -19,15 +21,34 @@ export async function fetchSofaScoreTodayMatches(): Promise<SofaScoreMatch[]> {
   const dd = String(today.getDate()).padStart(2, '0');
   const dateStr = `${yyyy}-${mm}-${dd}`;
   const url = `https://www.sofascore.com/api/v1/sport/football/scheduled-events/${dateStr}`;
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; BetBrosBot/1.0)'
-    }
-  });
+
+  let fetchUrl = url;
+  const headers: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0 (compatible; BetBrosBot/1.0)'
+  };
+
+  if (process.env.USE_PROXY === 'true' && process.env.SCRAPING_ANT_API_KEY) {
+    fetchUrl = `https://api.scrapingant.com/v1/general?url=${encodeURIComponent(url)}&x-api-key=${process.env.SCRAPING_ANT_API_KEY}`;
+  }
+
+  const res = await fetch(fetchUrl, { headers });
   if (!res.ok) throw new Error(`SofaScore API fetch error: ${res.statusText}`);
-  const json = await res.json();
+  const jsonResponse = await res.json();
+
+  let json;
+  if (process.env.USE_PROXY === 'true') {
+    // Extract JSON from ScrapingAnt's response
+    const match = jsonResponse.content.match(/<pre>(.*?)<\/pre>/s);
+    if (match && match[1]) {
+      json = JSON.parse(match[1]);
+    } else {
+      throw new Error('Failed to extract JSON from ScrapingAnt response');
+    }
+  } else {
+    json = jsonResponse;
+  }
+
   const matches: SofaScoreMatch[] = [];
-  console.log(matches)
   if (!json.events) return matches;
   for (const event of json.events) {
     const league = event.tournament?.name || '';
