@@ -72,22 +72,29 @@ export async function autoResolveBets(client?: Client) {
         const homeNorm = normalize(home);
         const awayNorm = normalize(away);
 
-        // Find match using fuzzy matching
+        // Find match using stricter criteria
         const fixture = matches.find((m: any) => {
           const sofaHomeNorm = normalize(m.home);
           const sofaAwayNorm = normalize(m.away);
-          return (sofaHomeNorm === homeNorm && sofaAwayNorm === awayNorm) ||
-                 (sofaHomeNorm === awayNorm && sofaAwayNorm === homeNorm); // Try reverse order too
+          const leagueMatch = m.league === eventBets[0].league; // Ensure league matches
+          const startTimeMatch = new Date(m.startTime).toISOString() === eventBets[0].startTime; // Ensure start time matches
+          return leagueMatch && startTimeMatch && (
+            (sofaHomeNorm === homeNorm && sofaAwayNorm === awayNorm) ||
+            (sofaHomeNorm === awayNorm && sofaAwayNorm === homeNorm) // Try reverse order too
+          );
         });
 
         if (!fixture) {
           console.log(`[AutoResolve] No SofaScore match found for: ${home} vs ${away}`);
           console.log(`[AutoResolve] Normalized: ${homeNorm} vs ${awayNorm}`);
+          console.log(`[AutoResolve] League: ${eventBets[0].league}, Start Time: ${eventBets[0].startTime}`);
           // Log available matches for debugging
-          const availableMatches = matches.slice(0, 3).map((m: any) => `${m.home} vs ${m.away}`);
+          const availableMatches = matches.slice(0, 3).map((m: any) => `${m.home} vs ${m.away} (${m.league}, ${m.startTime})`);
           console.log(`[AutoResolve] Available matches sample:`, availableMatches);
           continue;
         }
+
+        console.log(`[AutoResolve] Matched fixture: ${fixture.home} vs ${fixture.away} (${fixture.league}, ${fixture.startTime})`);
 
         // Only resolve if match is finished
         if (fixture.status !== 'finished') {
