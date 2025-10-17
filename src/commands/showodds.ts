@@ -124,6 +124,14 @@ module.exports = {
                     const teams = event.home_team + ' vs ' + event.away_team;
                     const bookmaker = event.bookmakers[0];
                     const outcomes = bookmaker.markets[0].outcomes;
+                    const matchDate = event.commence_time ? new Date(event.commence_time) : null;
+                    const dateStr = matchDate ? matchDate.toLocaleString('pl-PL', { 
+                        timeZone: 'Europe/Warsaw',
+                        day: 'numeric',
+                        month: 'long',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    }) : '';
                     const row = new ActionRowBuilder<ButtonBuilder>();
                     outcomes.forEach((o: any, idx: number) => {
                         row.addComponents(
@@ -134,7 +142,7 @@ module.exports = {
                         );
                     });
                     await eventInteraction.update({
-                        content: `**${teams}** (League: ${leagueMap[event.id]})\nYou have **${user.coins}** coins.\nEnter your bet amount and click a button to bet:`,
+                        content: `**${teams}** (League: ${leagueMap[event.id]})${dateStr ? `\nMatch Date: ${dateStr}` : ''}\nYou have **${user.coins}** coins.\nEnter your bet amount and click a button to bet:`,
                         components: [row]
                     });
 

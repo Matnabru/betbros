@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "npm run build && node dist/index.js"
+    "start": "npm run build && node dist/index.js",
+    "fix-eventids": "tsc fix-duplicate-eventids.ts && node fix-duplicate-eventids.js"
   },
   "author": "",
   "license": "MIT",

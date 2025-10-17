@@ -11,7 +11,8 @@ const betSchema = new mongoose.Schema<BetType>({
   amount: { type: Number, required: true },
   resolved: { type: Boolean, default: false },
   won: { type: Boolean, default: null },
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
+  matchDate: { type: Date, required: false }
 });
 
 export const Bet = mongoose.model<BetType>('Bet', betSchema);

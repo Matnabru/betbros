@@ -59,6 +59,33 @@ module.exports = {
                 }
                 const eventName = eventMatch[1];
                 const league = eventMatch[2];
+                // Extract match date if present
+                const dateMatch = content.match(/Match Date: (.+)/);
+                let matchDate: Date | undefined = undefined;
+                if (dateMatch) {
+                    // Parse Polish date format: "18 października 16:15"
+                    const polishMonths: {[key: string]: number} = {
+                        'stycznia': 0, 'lutego': 1, 'marca': 2, 'kwietnia': 3, 'maja': 4, 'czerwca': 5,
+                        'lipca': 6, 'sierpnia': 7, 'września': 8, 'października': 9, 'listopada': 10, 'grudnia': 11
+                    };
+                    const dateStr = dateMatch[1];
+                    const parts = dateStr.match(/(\d+)\s+(\w+)\s+(\d+):(\d+)/);
+                    if (parts) {
+                        const day = parseInt(parts[1]);
+                        const month = polishMonths[parts[2]];
+                        const hour = parseInt(parts[3]);
+                        const minute = parseInt(parts[4]);
+                        if (month !== undefined) {
+                            matchDate = new Date();
+                            matchDate.setMonth(month);
+                            matchDate.setDate(day);
+                            matchDate.setHours(hour);
+                            matchDate.setMinutes(minute);
+                            matchDate.setSeconds(0);
+                            matchDate.setMilliseconds(0);
+                        }
+                    }
+                }
                 // Get outcome name and odds from button label
                 const { ActionRowBuilder, ButtonBuilder } = require('discord.js');
                 const row = msg.components[0] as InstanceType<typeof ActionRowBuilder>;
@@ -91,7 +118,8 @@ module.exports = {
                     league,
                     outcome,
                     odds,
-                    amount
+                    amount,
+                    matchDate
                 });
                 // Send bet notification to the specified channel
                 try {
@@ -108,7 +136,14 @@ module.exports = {
                     }
                 } catch (e) { console.error('Failed to send bet notification:', e); }
                 // Update the original message to refresh coin balance and keep buttons enabled
-                const newContent = `**${eventName}** (League: ${league})\nYou have **${user.coins}** coins.\nEnter your bet amount and click a button to bet:`;
+                const dateInfo = matchDate ? `\nMatch Date: ${matchDate.toLocaleString('pl-PL', { 
+                    timeZone: 'Europe/Warsaw',
+                    day: 'numeric',
+                    month: 'long',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                })}` : '';
+                const newContent = `**${eventName}** (League: ${league})${dateInfo}\nYou have **${user.coins}** coins.\nEnter your bet amount and click a button to bet:`;
                 try {
                     await msg.edit({ content: newContent, components: msg.components });
                 } catch {}
