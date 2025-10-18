@@ -5,6 +5,7 @@ const userSchema = new mongoose.Schema({
   coins: { type: Number, default: 1000 }, // Default starting coins
   inventory: { type: Array, default: [] },
   lastLootbox: { type: Date, default: null },
+  bankruptcyCount: { type: Number, default: 0 }, // Track how many times user went broke
   createdAt: { type: Date, default: Date.now }
 });
 

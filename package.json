@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "npm run build && node dist/index.js",
-    "fix-eventids": "tsc fix-duplicate-eventids.ts && node fix-duplicate-eventids.js"
+    "fix-eventids": "tsc fix-duplicate-eventids.ts && node fix-duplicate-eventids.js",
+    "register": "tsc && node dist/register-commands.js"
   },
   "author": "",
   "license": "MIT",

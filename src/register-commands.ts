@@ -7,7 +7,7 @@ dotenv.config();
 const commands: any[] = [];
 const commandsPath = path.join(__dirname, 'commands');
 if (fs.existsSync(commandsPath)) {
-    const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.ts') || file.endsWith('.js'));
+    const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
     for (const file of commandFiles) {
         const command = require(path.join(commandsPath, file));
         if (command.data) {
@@ -15,6 +15,8 @@ if (fs.existsSync(commandsPath)) {
         }
     }
 }
+
+console.log(`Loaded ${commands.length} commands:`, commands.map(c => c.name).join(', '));
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN!);
 

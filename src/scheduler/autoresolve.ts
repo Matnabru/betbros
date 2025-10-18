@@ -65,9 +65,11 @@ export async function autoResolveBets(client?: Client) {
         // Normalize team names for fuzzy matching
         const normalize = (name: string) => name
           .toLowerCase()
-          .replace(/[-\s.]/g, '') // Remove hyphens, spaces, dots
           .replace(/saint/g, 'st') // Saint -> St
-          .replace(/psg/g, 'parissaintgermain'); // Handle PSG abbreviation
+          .replace(/psg/g, 'parissaintgermain') // Handle PSG abbreviation
+          .replace(/\s+(f\.?c\.?|c\.?f\.?|s\.?c\.?|a\.?f\.?c\.?|s\.?f\.?c\.?|c\.?f\.?c\.?|a\.?c\.?|b\.?c\.?|fc|cf|sc|afc|sfc|cfc|ac|bc|united|city|club|team)$/gi, '') // Remove suffixes with space before removing spaces
+          .replace(/[-.]/g, '') // Remove hyphens and dots
+          .replace(/\s+/g, ''); // Remove all remaining spaces
 
         const homeNorm = normalize(home);
         const awayNorm = normalize(away);
@@ -76,9 +78,22 @@ export async function autoResolveBets(client?: Client) {
         const fixture = matches.find((m: any) => {
           const sofaHomeNorm = normalize(m.home);
           const sofaAwayNorm = normalize(m.away);
-          const leagueMatch = m.league === eventBets[0].league; // Ensure league matches
-          const startTimeMatch = new Date(m.startTime).toISOString() === eventBets[0].startTime; // Ensure start time matches
-          return leagueMatch && startTimeMatch && (
+          // Only print debug if home or away starts with same letter as event home or away
+          const firstHomeLetter = home.trim().charAt(0).toLowerCase();
+          const firstAwayLetter = away.trim().charAt(0).toLowerCase();
+          const mHomeFirst = m.home.trim().charAt(0).toLowerCase();
+          const mAwayFirst = m.away.trim().charAt(0).toLowerCase();
+          if (
+            mHomeFirst === firstHomeLetter ||
+            mHomeFirst === firstAwayLetter ||
+            mAwayFirst === firstHomeLetter ||
+            mAwayFirst === firstAwayLetter
+          ) {
+            console.log(`[AutoResolve][DEBUG] Comparing:`);
+            console.log(`  Event: homeNorm='${homeNorm}', awayNorm='${awayNorm}'`);
+            console.log(`  Fixture: sofaHomeNorm='${sofaHomeNorm}', sofaAwayNorm='${sofaAwayNorm}' | Raw: '${m.home}' vs '${m.away}'`);
+          }
+          return (
             (sofaHomeNorm === homeNorm && sofaAwayNorm === awayNorm) ||
             (sofaHomeNorm === awayNorm && sofaAwayNorm === homeNorm) // Try reverse order too
           );
@@ -88,9 +103,19 @@ export async function autoResolveBets(client?: Client) {
           console.log(`[AutoResolve] No SofaScore match found for: ${home} vs ${away}`);
           console.log(`[AutoResolve] Normalized: ${homeNorm} vs ${awayNorm}`);
           console.log(`[AutoResolve] League: ${eventBets[0].league}, Start Time: ${eventBets[0].startTime}`);
-          // Log available matches for debugging
-          const availableMatches = matches.slice(0, 3).map((m: any) => `${m.home} vs ${m.away} (${m.league}, ${m.startTime})`);
-          console.log(`[AutoResolve] Available matches sample:`, availableMatches);
+          // Print only fixtures where both home and away start with the same letter as event home or away
+          const firstHomeLetter = home.trim().charAt(0).toLowerCase();
+          const firstAwayLetter = away.trim().charAt(0).toLowerCase();
+          const filteredMatches = matches.filter((m: any) => {
+            const mHomeFirst = m.home.trim().charAt(0).toLowerCase();
+            const mAwayFirst = m.away.trim().charAt(0).toLowerCase();
+            return (
+              (mHomeFirst === firstHomeLetter && mAwayFirst === firstAwayLetter) ||
+              (mHomeFirst === firstAwayLetter && mAwayFirst === firstHomeLetter)
+            );
+          });
+          const availableMatches = filteredMatches.map((m: any) => `${m.home} vs ${m.away} (${m.league}, ${m.startTime})`);
+          console.log(`[AutoResolve] Filtered matches sample:`, availableMatches);
           continue;
         }
 
@@ -174,15 +199,33 @@ export async function autoResolveBets(client?: Client) {
             }
             const channel = await client.channels.fetch(channelId);
             if (channel && channel.type === ChannelType.GuildText) {
+              // Prepare list of results
+              let resultsList = '';
+              for (const bet of eventBets) {
+                let userTag = bet.userId;
+                try {
+                  const member = await channel.guild.members.fetch(bet.userId);
+                  userTag = member ? member.displayName : bet.userId;
+                } catch {}
+                const payout = bet.won ? Math.round(bet.amount * bet.odds) : -bet.amount;
+                const sign = payout > 0 ? '+' : '';
+                resultsList += `\n**${userTag}**: ${sign}${payout} coins (${bet.outcome})`;
+              }
+
               const winners = eventBets.filter((bet: any) => bet.won);
+              const losers = eventBets.filter((bet: any) => bet.won === false);
               const winnersText = winners.length > 0 
                 ? `\n🎉 **Zwycięzcy:** ${winners.length} graczy wygrało swoje zakłady!`
                 : '\n😢 **Brak zwycięzców** w tym meczu.';
-              
+              const losersText = losers.length > 0
+                ? `\n😢 **Przegrani:** ${losers.length} graczy straciło swoje zakłady.`
+                : '';
+
               const message = `⚽ **Mecz rozstrzygnięty!**
 **${home} ${homeScore}-${awayScore} ${away}**
 ${result === 'DRAW' ? '🤝 **Wynik:** Remis' : `🏆 **Zwycięzca:** ${result}`}
-📊 **Zakładów:** ${eventResolvedBets}${winnersText}`;
+📊 **Zakładów:** ${eventResolvedBets}${winnersText}${losersText}
+${resultsList}`;
 
               await (channel as any).send(message);
             }
