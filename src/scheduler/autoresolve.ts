@@ -23,16 +23,32 @@ export async function autoResolveBets(client?: Client) {
       return;
     }
 
-    // Group bets by unique event
+    // Group bets by unique event (using eventName as primary key since eventId may have duplicates)
     const eventMap = new Map();
     unresolvedBets.forEach((bet: any) => {
-      if (!eventMap.has(bet.eventId)) {
-        eventMap.set(bet.eventId, []);
+      // Use eventName as the key to ensure bets are grouped correctly
+      const key = bet.eventName;
+      if (!eventMap.has(key)) {
+        eventMap.set(key, []);
       }
-      eventMap.get(bet.eventId).push(bet);
+      eventMap.get(key).push(bet);
     });
 
     console.log(`[AutoResolve] Found ${eventMap.size} unique events with unresolved bets`);
+    
+    // Check for duplicate eventIds with different event names (diagnostic logging)
+    const eventIdMap = new Map();
+    unresolvedBets.forEach((bet: any) => {
+      if (!eventIdMap.has(bet.eventId)) {
+        eventIdMap.set(bet.eventId, new Set());
+      }
+      eventIdMap.get(bet.eventId).add(bet.eventName);
+    });
+    for (const [eventId, eventNames] of eventIdMap) {
+      if (eventNames.size > 1) {
+        console.warn(`[AutoResolve] WARNING: EventId ${eventId} has multiple event names:`, Array.from(eventNames));
+      }
+    }
 
     // Fetch today's matches from SofaScore
     let matches;

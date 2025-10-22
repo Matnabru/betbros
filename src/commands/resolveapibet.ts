@@ -121,6 +121,9 @@ module.exports = {
                     return;
                 }
                 // Now resolve bets as in original resolvebet
+                const winners: Array<{userId: string, amount: number, outcome: string}> = [];
+                const losers: Array<{userId: string, amount: number, outcome: string}> = [];
+                
                 for (const bet of eventBets) {
                     try {
                         if (bet.outcome === result || (result === 'DRAW' && bet.outcome === 'Draw')) {
@@ -130,15 +133,56 @@ module.exports = {
                                 const payout = Math.round(bet.amount * bet.odds);
                                 betUser.coins += payout;
                                 await betUser.save();
+                                winners.push({ userId: bet.userId, amount: payout - bet.amount, outcome: bet.outcome });
                             }
                             bet.won = true;
                         } else {
+                            losers.push({ userId: bet.userId, amount: bet.amount, outcome: bet.outcome });
                             bet.won = false;
                         }
                         bet.resolved = true;
                         await bet.save();
                     } catch (err) { console.error('Resolve error:', err); }
                 }
+                
+                // Send notification to Discord channel
+                try {
+                    const channelId = process.env.NOTIFICATION_CHANNEL_ID;
+                    if (channelId) {
+                        const notifChannel = await interaction.client.channels.fetch(channelId);
+                        if (notifChannel && notifChannel.isTextBased() && 'send' in notifChannel) {
+                            let message = `⚽ **Mecz rozstrzygnięty!**\n`;
+                            message += `**${eventName}**\n`;
+                            message += `🏆 Zwycięzca: **${result}** (${homeScore}-${awayScore})\n`;
+                            message += `📊 Zakładów: ${eventBets.length}\n`;
+                            
+                            if (winners.length > 0) {
+                                message += `\n🎉 **Zwycięzcy:** ${winners.length} graczy wygrało!\n`;
+                                for (const w of winners) {
+                                    const user = await User.findOne({ userId: w.userId });
+                                    const username = user ? `<@${w.userId}>` : w.userId;
+                                    message += `${username}: +${w.amount} coins (${w.outcome})\n`;
+                                }
+                            } else {
+                                message += `\n😢 Brak zwycięzców w tym meczu.\n`;
+                            }
+                            
+                            if (losers.length > 0) {
+                                message += `\n😢 **Przegrani:** ${losers.length} graczy straciło swoje zakłady.\n`;
+                                for (const l of losers) {
+                                    const user = await User.findOne({ userId: l.userId });
+                                    const username = user ? `<@${l.userId}>` : l.userId;
+                                    message += `${username}: -${l.amount} coins (${l.outcome})\n`;
+                                }
+                            }
+                            
+                            await (notifChannel as any).send({ content: message });
+                        }
+                    }
+                } catch (err) {
+                    console.error('Failed to send resolution notification:', err);
+                }
+                
                 await eventInteraction.reply({ content: `Event resolved as: ${result} (score: ${homeScore}-${awayScore}). Winners paid out.`, ephemeral: true });
             } catch (err) {
                 console.error('API Event collector error:', err);

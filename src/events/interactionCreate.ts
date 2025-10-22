@@ -111,9 +111,12 @@ module.exports = {
                 }
                 user.coins -= amount;
                 await user.save();
+                // Create a unique eventId by combining API eventId with event name
+                // This prevents duplicate eventIds when API reuses IDs
+                const uniqueEventId = `${eventId}_${eventName.replace(/\s+/g, '_')}`;
                 await Bet.create({
                     userId: interaction.user.id,
-                    eventId,
+                    eventId: uniqueEventId,
                     eventName,
                     league,
                     outcome,
