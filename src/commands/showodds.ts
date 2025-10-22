@@ -159,8 +159,10 @@ module.exports = {
                     collector?.on('collect', async (i) => {
                         const idx = parseInt(i.customId.replace('bet_', ''));
                         // Show modal for bet amount
+                        // Include ISO timestamp in customId (timestamp in seconds to keep it short)
+                        const timestamp = matchDate ? Math.floor(matchDate.getTime() / 1000) : 0;
                         const modal = new ModalBuilder()
-                            .setCustomId(`betmodal_${event.id}_${idx}`)
+                            .setCustomId(`betmodal_${event.id}_${idx}_${timestamp}`)
                             .setTitle('Place Your Bet');
                         const amountInput = new TextInputBuilder()
                             .setCustomId('bet_amount')

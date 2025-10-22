@@ -33,7 +33,11 @@ module.exports = {
                         try { (interaction as any).followUp(opts); } catch {}
                     });
                 }
-                const [ , eventId, outcomeIdx ] = interaction.customId.split('_');
+                const parts = interaction.customId.split('_');
+                const eventId = parts[1];
+                const outcomeIdx = parts[2];
+                const timestamp = parts[3] ? parseInt(parts[3]) : 0;
+                
                 const amountStr = interaction.fields.getTextInputValue('bet_amount');
                 const amount = parseInt(amountStr);
                 if (isNaN(amount) || amount <= 0) {
@@ -59,33 +63,8 @@ module.exports = {
                 }
                 const eventName = eventMatch[1];
                 const league = eventMatch[2];
-                // Extract match date if present
-                const dateMatch = content.match(/Match Date: (.+)/);
-                let matchDate: Date | undefined = undefined;
-                if (dateMatch) {
-                    // Parse Polish date format: "18 października 16:15"
-                    const polishMonths: {[key: string]: number} = {
-                        'stycznia': 0, 'lutego': 1, 'marca': 2, 'kwietnia': 3, 'maja': 4, 'czerwca': 5,
-                        'lipca': 6, 'sierpnia': 7, 'września': 8, 'października': 9, 'listopada': 10, 'grudnia': 11
-                    };
-                    const dateStr = dateMatch[1];
-                    const parts = dateStr.match(/(\d+)\s+(\w+)\s+(\d+):(\d+)/);
-                    if (parts) {
-                        const day = parseInt(parts[1]);
-                        const month = polishMonths[parts[2]];
-                        const hour = parseInt(parts[3]);
-                        const minute = parseInt(parts[4]);
-                        if (month !== undefined) {
-                            matchDate = new Date();
-                            matchDate.setMonth(month);
-                            matchDate.setDate(day);
-                            matchDate.setHours(hour);
-                            matchDate.setMinutes(minute);
-                            matchDate.setSeconds(0);
-                            matchDate.setMilliseconds(0);
-                        }
-                    }
-                }
+                // Get match date from timestamp in customId
+                const matchDate = timestamp > 0 ? new Date(timestamp * 1000) : undefined;
                 // Get outcome name and odds from button label
                 const { ActionRowBuilder, ButtonBuilder } = require('discord.js');
                 const row = msg.components[0] as InstanceType<typeof ActionRowBuilder>;
