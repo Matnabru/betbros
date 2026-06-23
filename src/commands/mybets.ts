@@ -2,6 +2,8 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, User as DiscordUser }
 import { connectMongo } from '../db/mongo';
 import { Bet } from '../db/bet';
 import { BetType } from '../types/bet';
+import { formatBetOutcome } from '../utils/formatBet';
+import { formatScore } from '../utils/scoreSettlement';
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -21,9 +23,13 @@ module.exports = {
       await interaction.editReply({ content: `No active bets found for <@${targetUser.id}>.` });
       return;
     }
-    let desc: string = bets.map((bet: BetType) =>
-      `**${bet.amount}** coins on **${bet.outcome}** (${bet.odds}) for **${bet.eventName}** (${bet.league})`
-    ).join('\n');
+    let desc: string = bets.map((bet: BetType) => {
+      if (bet.scoringMode === 'score') {
+        return `**${formatBetOutcome(bet)}** (${bet.odds}) for **${bet.eventName}** (${bet.league}) — win **+${formatScore(bet.odds - 1)}**, loss **-1**`;
+      }
+
+      return `**${bet.amount}** coins on **${formatBetOutcome(bet)}** (${bet.odds}) for **${bet.eventName}** (${bet.league})`;
+    }).join('\n');
     await interaction.editReply({ content: `**Active Bets for <@${targetUser.id}>:**\n${desc}` });
   },
 };

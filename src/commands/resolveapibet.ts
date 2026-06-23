@@ -2,11 +2,16 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, ActionRowBuilder, Str
 import { connectMongo } from '../db/mongo';
 const { Bet } = require('../db/bet');
 import { User } from '../db/user';
-import fetch from 'node-fetch';
-import { fetchSofaScoreTodayMatches } from '../features/fetchSofaScoreTodayMatches';
-import { leagueApiFootballMap } from '../leagueApiFootballMap';
-import { findFixtureByTeamsOnDate } from '../features/findFixtureByTeamsOnDate';
+import {
+    ApiFootballMatchResult,
+    fetchApiFootballMatchResultByFixtureId,
+    fetchApiFootballMatchResultsByDate
+} from '../features/apiFootball';
+import { fetchSofaScoreMatchesByDate } from '../features/fetchSofaScoreTodayMatches';
 import dotenv from 'dotenv';
+import { normalizeTeamName, settleBet } from '../utils/betResolution';
+import { applyBetSettlementOnce, createSettlementBuckets } from '../utils/applyBetSettlement';
+import { formatScore } from '../utils/scoreSettlement';
 // Keep leagueOptions in sync with bet.js
 const leagueOptions = [
     { label: 'La Liga (Spain)', value: 'soccer_spain_la_liga' },
@@ -21,6 +26,83 @@ const leagueOptions = [
 ];
 
 dotenv.config();
+
+type ResolvableMatch = Pick<ApiFootballMatchResult, 'league' | 'home' | 'away' | 'homeScore' | 'awayScore' | 'status' | 'startTime'> & {
+    source: 'API-Football' | 'SofaScore';
+};
+
+function toDateKey(date: Date): string {
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+
+    return `${yyyy}-${mm}-${dd}`;
+}
+
+function resultLookupDates(date: Date): Date[] {
+    const dayMs = 24 * 60 * 60 * 1000;
+    return [
+        date,
+        new Date(date.getTime() - dayMs),
+        new Date(date.getTime() + dayMs)
+    ];
+}
+
+function getEventDate(eventBets: any[]): Date {
+    const betWithDate = eventBets.find((bet) => bet.matchDate);
+    return betWithDate?.matchDate ? new Date(betWithDate.matchDate) : new Date();
+}
+
+function teamsMatch(fixture: Pick<ResolvableMatch, 'home' | 'away'>, home: string, away: string): boolean {
+    const homeNorm = normalizeTeamName(home);
+    const awayNorm = normalizeTeamName(away);
+    const fixtureHomeNorm = normalizeTeamName(fixture.home);
+    const fixtureAwayNorm = normalizeTeamName(fixture.away);
+
+    return (fixtureHomeNorm === homeNorm && fixtureAwayNorm === awayNorm)
+        || (fixtureHomeNorm === awayNorm && fixtureAwayNorm === homeNorm);
+}
+
+function getNumericProviderFixtureId(eventBets: any[]): string | undefined {
+    return eventBets.find((bet) => bet.providerFixtureId && /^\d+$/.test(String(bet.providerFixtureId)))?.providerFixtureId;
+}
+
+async function findScoreSourceResult(eventBets: any[], home: string, away: string): Promise<ResolvableMatch | null> {
+    const eventDate = getEventDate(eventBets);
+    const providerFixtureId = getNumericProviderFixtureId(eventBets);
+    if (providerFixtureId) {
+        try {
+            const fixture = await fetchApiFootballMatchResultByFixtureId(Number(providerFixtureId));
+            if (fixture) return { ...fixture, source: 'API-Football' };
+        } catch (err) {
+            console.warn(`[ResolveApiBet] API-Football fixture lookup failed for ${providerFixtureId}:`, err);
+        }
+    }
+
+    for (const lookupDate of resultLookupDates(eventDate)) {
+        const apiDate = toDateKey(lookupDate);
+        try {
+            const matches = await fetchApiFootballMatchResultsByDate(apiDate);
+            const fixture = matches.find((match) => teamsMatch(match, home, away));
+            if (fixture) return { ...fixture, source: 'API-Football' };
+        } catch (err) {
+            console.warn(`[ResolveApiBet] API-Football date lookup failed for ${home} vs ${away} on ${apiDate}:`, err);
+        }
+    }
+
+    for (const lookupDate of resultLookupDates(eventDate)) {
+        const sofaDate = toDateKey(lookupDate);
+        try {
+            const sofaMatches = await fetchSofaScoreMatchesByDate(lookupDate);
+            const sofaFixture = sofaMatches.find((match) => teamsMatch(match, home, away));
+            if (sofaFixture) return { ...sofaFixture, source: 'SofaScore' };
+        } catch (err) {
+            console.warn(`[ResolveApiBet] SofaScore date lookup failed for ${home} vs ${away} on ${sofaDate}:`, err);
+        }
+    }
+
+    return null;
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -70,10 +152,11 @@ module.exports = {
 
         eventCollector.once('collect', async (eventInteraction: StringSelectMenuInteraction) => {
             try {
+                await eventInteraction.deferUpdate();
                 const eventId = eventInteraction.values[0];
                 const eventBets = unresolvedBets.filter((b:any) => b.eventId === eventId);
                 if (eventBets.length === 0) {
-                    try { await eventInteraction.reply({ content: 'No bets found for this event.', ephemeral: true }); } catch (err) { console.error('Reply error:', err); }
+                    await dm.send('No bets found for this event.');
                     return;
                 }
                 // Extract home and away team from eventName
@@ -84,26 +167,22 @@ module.exports = {
                     home = match[1].trim();
                     away = match[2].trim();
                 } else {
-                    await eventInteraction.reply({ content: 'Could not parse event name for teams.', ephemeral: true });
+                    await dm.send('Could not parse event name for teams.');
                     return;
                 }
-                // Use today's date for the query
-                const date = new Date().toISOString().slice(0, 10);
-                await dm.send({ content: `Querying SofaScore for: ${home} vs ${away}, Date: ${date}` });
-                let matches;
+                await dm.send({ content: `Querying score sources for: ${home} vs ${away}` });
+                let fixture;
                 try {
-                    matches = await fetchSofaScoreTodayMatches();
+                    fixture = await findScoreSourceResult(eventBets, home, away);
                 } catch (err) {
-                    await dm.send({ content: `SofaScore fetch error: ${err}` });
+                    await dm.send({ content: `Score source fetch error: ${err}` });
                     return;
                 }
-                // Find exact match for home and away
-                const fixture = matches.find((m:any) => m.home === home && m.away === away);
                 if (!fixture) {
-                    await eventInteraction.reply({ content: `No result found by SofaScore for ${home} vs ${away}.`, ephemeral: true });
+                    await dm.send(`No result found by API-Football or SofaScore for ${home} vs ${away}.`);
                     return;
                 }
-                await dm.send({ content: `SofaScore fixture: ${JSON.stringify(fixture)}` });
+                await dm.send({ content: `${fixture.source} fixture: ${JSON.stringify(fixture)}` });
                 // Determine result
                 let result = '';
                 let homeScore = fixture.homeScore, awayScore = fixture.awayScore;
@@ -113,37 +192,29 @@ module.exports = {
                         else if (awayScore > homeScore) result = away;
                         else result = 'DRAW';
                     } else {
-                        await eventInteraction.reply({ content: `Could not determine score for this match.`, ephemeral: true });
+                        await dm.send('Could not determine score for this match.');
                         return;
                     }
                 } else {
-                    await eventInteraction.reply({ content: `Match not finished yet.`, ephemeral: true });
+                    await dm.send(`Match not finished yet. Status: ${fixture.status}`);
                     return;
                 }
+                const matchResult = {
+                    homeTeam: fixture.home,
+                    awayTeam: fixture.away,
+                    homeScore,
+                    awayScore
+                };
                 // Now resolve bets as in original resolvebet
-                const winners: Array<{userId: string, amount: number, outcome: string}> = [];
-                const losers: Array<{userId: string, amount: number, outcome: string}> = [];
+                const buckets = createSettlementBuckets();
                 
                 for (const bet of eventBets) {
                     try {
-                        if (bet.outcome === result || (result === 'DRAW' && bet.outcome === 'Draw')) {
-                            // Winner
-                            const betUser = await User.findOne({ userId: bet.userId });
-                            if (betUser) {
-                                const payout = Math.round(bet.amount * bet.odds);
-                                betUser.coins += payout;
-                                await betUser.save();
-                                winners.push({ userId: bet.userId, amount: payout - bet.amount, outcome: bet.outcome });
-                            }
-                            bet.won = true;
-                        } else {
-                            losers.push({ userId: bet.userId, amount: bet.amount, outcome: bet.outcome });
-                            bet.won = false;
-                        }
-                        bet.resolved = true;
-                        await bet.save();
+                        const settlement = settleBet(bet, matchResult, home, away);
+                        await applyBetSettlementOnce(bet, settlement, buckets);
                     } catch (err) { console.error('Resolve error:', err); }
                 }
+                const { winners, losers, refunded, scoreChanges } = buckets;
                 
                 // Send notification to Discord channel
                 try {
@@ -163,7 +234,7 @@ module.exports = {
                                     const username = user ? `<@${w.userId}>` : w.userId;
                                     message += `${username}: +${w.amount} coins (${w.outcome})\n`;
                                 }
-                            } else {
+                            } else if (scoreChanges.length === 0) {
                                 message += `\n😢 Brak zwycięzców w tym meczu.\n`;
                             }
                             
@@ -175,6 +246,23 @@ module.exports = {
                                     message += `${username}: -${l.amount} coins (${l.outcome})\n`;
                                 }
                             }
+
+                            if (refunded.length > 0) {
+                                message += `\n↩️ **Zwroty:** ${refunded.length} zakładów zwrócono.\n`;
+                                for (const r of refunded) {
+                                    const user = await User.findOne({ userId: r.userId });
+                                    const username = user ? `<@${r.userId}>` : r.userId;
+                                    message += `${username}: +0 coins (${r.outcome}, refund ${r.amount})\n`;
+                                }
+                            }
+
+                            if (scoreChanges.length > 0) {
+                                message += `\n📈 **Score:**\n`;
+                                for (const change of scoreChanges) {
+                                    const sign = change.delta > 0 ? '+' : '';
+                                    message += `<@${change.userId}>: ${sign}${formatScore(change.delta)} pts (${change.outcome})\n`;
+                                }
+                            }
                             
                             await (notifChannel as any).send({ content: message });
                         }
@@ -183,9 +271,12 @@ module.exports = {
                     console.error('Failed to send resolution notification:', err);
                 }
                 
-                await eventInteraction.reply({ content: `Event resolved as: ${result} (score: ${homeScore}-${awayScore}). Winners paid out.`, ephemeral: true });
+                await dm.send(`Event resolved as: ${result} (score: ${homeScore}-${awayScore}). Winners paid out.`);
             } catch (err) {
                 console.error('API Event collector error:', err);
+                try {
+                    await dm.send(`API resolve failed: ${err instanceof Error ? err.message : String(err)}`);
+                } catch {}
             }
         });
     }

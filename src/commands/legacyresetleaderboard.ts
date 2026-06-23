@@ -7,8 +7,8 @@ dotenv.config();
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('resetleaderboard')
-  .setDescription('Reset all users on this server to 0 score (only for authorized user)'),
+    .setName('legacyresetleaderboard')
+  .setDescription('Reset all users to 1000 legacy coins (only for authorized user)'),
   async execute(interaction: ChatInputCommandInteraction) {
     // Only allow specific user
     if (interaction.user.id !== process.env.ADMIN_USER_ID) {
@@ -18,7 +18,7 @@ module.exports = {
     await connectMongo();
     // Optionally, only reset users who are in this guild
     // For now, reset all users
-    await User.updateMany({}, { $set: { score: 0 } });
-    await interaction.reply('Prediction leaderboard has been reset. All users now have 0 score.');
+    await User.updateMany({}, { $set: { coins: 1000 } });
+    await interaction.reply('Leaderboard has been reset. All users now have 1000 coins.');
   },
 };

@@ -5,8 +5,8 @@ import { CustomBet } from '../db/customBet';
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('custombets')
-        .setDescription('View all active custom bets'),
+        .setName('legacycustombets')
+        .setDescription('View all active legacy custom coin bets'),
     async execute(interaction: ChatInputCommandInteraction) {
         await connectMongo();
 

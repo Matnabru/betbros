@@ -3,14 +3,13 @@ import { connectMongo } from '../db/mongo';
 import { User } from '../db/user';
 import { Bet } from '../db/bet';
 import dotenv from 'dotenv';
-import { formatScore } from '../utils/scoreSettlement';
 
 dotenv.config();
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('updateleaderboard')
-    .setDescription('Update and print the leaderboard to the leaderboard channel (admin only)'),
+    .setName('legacyupdateleaderboard')
+    .setDescription('Update and print the legacy coin leaderboard (admin only)'),
   async execute(interaction: ChatInputCommandInteraction) {
     // Only allow specific user (replace with your admin ID or add permission checks as needed)
     if (interaction.user.id !== process.env.ADMIN_USER_ID) {
@@ -18,21 +17,21 @@ module.exports = {
       return;
     }
     await connectMongo();
-    const topUsers = await User.find({ score: { $ne: 0 } }).sort({ score: -1 }).limit(20);
+    const topUsers = await User.find().sort({ coins: -1 }).limit(20);
     if (!topUsers.length) {
-      await interaction.reply('No leaderboard entries yet.');
+      await interaction.reply('No users found.');
       return;
     }
     // For each user, get the sum of unresolved bet amounts
     const userIds = topUsers.map(u => u.userId);
     const bets = await Bet.aggregate([
-      { $match: { userId: { $in: userIds }, resolved: false, scoringMode: 'score' } },
-      { $group: { _id: '$userId', active: { $sum: 1 } } }
+      { $match: { userId: { $in: userIds }, resolved: false } },
+      { $group: { _id: '$userId', locked: { $sum: '$amount' } } }
     ]);
-    const activeMap = new Map(bets.map(b => [b._id, b.active]));
+    const lockedMap = new Map(bets.map(b => [b._id, b.locked]));
     let desc = topUsers.map((u, i) => {
-      const active = activeMap.get(u.userId) || 0;
-      return `#${i + 1} <@${u.userId}> — **${formatScore(u.score || 0)}** pts${active > 0 ? ` (${active} active)` : ''}`;
+      const locked = lockedMap.get(u.userId) || 0;
+      return `#${i + 1} <@${u.userId}> — **${u.coins}**${locked > 0 ? ` (**${locked}**)` : ''} coins`;
     }).join('\n');
     // Replace with your leaderboard channel ID
     const channelId = process.env.NOTIFICATION_CHANNEL_ID;
@@ -45,7 +44,7 @@ module.exports = {
       await interaction.reply({ content: 'Leaderboard channel not found.', ephemeral: true });
       return;
     }
-    await (channel as any).send({ content: `**Prediction Leaderboard:**\n${desc}` });
+    await (channel as any).send({ content: `**Leaderboard:**\n${desc}` });
     await interaction.reply({ content: 'Leaderboard updated!', ephemeral: true });
   },
 };

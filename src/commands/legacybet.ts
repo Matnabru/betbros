@@ -5,15 +5,17 @@ import {
     ChatInputCommandInteraction,
     ComponentType,
     Interaction,
+    ModalBuilder,
     SlashCommandBuilder,
     StringSelectMenuBuilder,
     StringSelectMenuInteraction,
+    TextInputBuilder,
+    TextInputStyle
 } from 'discord.js';
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
 import { connectMongo } from '../db/mongo';
 import { User } from '../db/user';
-import { Bet } from '../db/bet';
 import { getApiFootballLeagueLabel, getDefaultFootballSeason, getSoccerLeagueByApiFootballId, soccerLeagues } from '../config/leagues';
 import { fetchMatchWinnerOddsByLeague, MatchWinnerMarket } from '../features/apiFootball';
 import {
@@ -24,10 +26,8 @@ import { formatMatchWinnerButtonLabel, orderMatchWinnerOutcomes } from '../utils
 import {
     BetButtonChoiceCode,
     BetButtonMarketCode,
-    decodeBetButtonId,
     encodeBetButtonId
 } from '../utils/betButtonIds';
-import { formatScore } from '../utils/scoreSettlement';
 
 dotenv.config();
 
@@ -75,15 +75,9 @@ const ODDS_API_FIXTURE_MARKETS = [
     'alternate_totals'
 ];
 const WORLD_CUP_LEAGUE_ID = 1;
-const PREDICTION_DUPLICATE_ERROR = 'DUPLICATE_ACTIVE_PREDICTION';
-const PREDICTION_CLOSED_ERROR = 'PREDICTION_CLOSED';
 
 function scoreValue(homeScore: number, awayScore: number): string {
     return `${homeScore}-${awayScore}`;
-}
-
-function isDuplicateKeyError(err: unknown): boolean {
-    return Boolean(err && typeof err === 'object' && 'code' in err && (err as { code?: number }).code === 11000);
 }
 
 function formatMatchDate(date: Date): string {
@@ -216,48 +210,6 @@ async function findLatestExactScoreOdd(
     return matchingOdds.reduce((best, current) => current.odds > best.odds ? current : best);
 }
 
-function marketFromButtonCode(marketCode: string): 'match_winner' | 'draw_no_bet' | 'btts' | 'total_goals' {
-    if (marketCode === 'dnb') return 'draw_no_bet';
-    if (marketCode === 'btts') return 'btts';
-    if (marketCode === 'tot' || marketCode === 'atot') return 'total_goals';
-    return 'match_winner';
-}
-
-function providerMarketIdFromButtonCode(marketCode: string): string {
-    if (marketCode === 'dnb') return 'draw_no_bet';
-    if (marketCode === 'btts') return 'btts';
-    if (marketCode === 'tot') return 'totals';
-    if (marketCode === 'atot') return 'alternate_totals';
-    return 'h2h';
-}
-
-function marketLabelFromButtonCode(marketCode: string): string | undefined {
-    if (marketCode === 'dnb') return 'Draw no bet';
-    if (marketCode === 'btts') return 'Both teams to score';
-    if (marketCode === 'tot') return 'Match goals';
-    if (marketCode === 'atot') return 'More match goals';
-    return undefined;
-}
-
-function outcomeFromButtonChoice(choiceCode: string, homeTeam: string, awayTeam: string): string {
-    if (choiceCode === 'h') return homeTeam;
-    if (choiceCode === 'd') return 'Draw';
-    if (choiceCode === 'a') return awayTeam;
-    if (choiceCode === 'y') return 'Yes';
-    if (choiceCode === 'n') return 'No';
-    if (choiceCode === 'o') return 'Over';
-    if (choiceCode === 'u') return 'Under';
-    return 'Unknown';
-}
-
-function parseOddsFromLabel(label: string): number | null {
-    const match = label.match(/\((\d+(?:\.\d+)?)\)$/);
-    if (!match) return null;
-
-    const odds = Number(match[1]);
-    return Number.isNaN(odds) ? null : odds;
-}
-
 function buildFixtureBetRows(
     event: MatchWinnerMarket,
     matchWinnerOutcomes: BetButtonOption[],
@@ -322,103 +274,6 @@ function buildFixtureBetRows(
     }
 
     return rows;
-}
-
-async function createScorePrediction(params: {
-    userId: string;
-    event: MatchWinnerMarket;
-    league: string;
-    outcome: string;
-    odds: number;
-    market: 'match_winner' | 'exact_score' | 'draw_no_bet' | 'btts' | 'total_goals';
-    provider: string;
-    providerMarketId?: string;
-    marketLabel?: string;
-    marketLine?: number;
-    bookmaker?: string;
-    predictedHomeScore?: number;
-    predictedAwayScore?: number;
-    oddsLastUpdated?: Date;
-}) {
-    if (Date.now() >= params.event.matchDate.getTime()) {
-        throw new Error(PREDICTION_CLOSED_ERROR);
-    }
-
-    await connectMongo();
-    let dbUser = await User.findOne({ userId: params.userId });
-    if (!dbUser) dbUser = await User.create({ userId: params.userId });
-
-    const eventName = `${params.event.homeTeam} vs ${params.event.awayTeam}`;
-    const uniqueEventId = `${params.event.fixtureId}_${eventName.replace(/\s+/g, '_')}`;
-    const duplicateQuery: Record<string, unknown> = {
-        userId: params.userId,
-        eventId: uniqueEventId,
-        resolved: false,
-        scoringMode: 'score',
-        market: params.market,
-        outcome: params.outcome
-    };
-    if (typeof params.marketLine === 'number') {
-        duplicateQuery.marketLine = params.marketLine;
-    }
-    if (params.market === 'exact_score') {
-        duplicateQuery.predictedHomeScore = params.predictedHomeScore;
-        duplicateQuery.predictedAwayScore = params.predictedAwayScore;
-    }
-
-    const prediction = {
-        userId: params.userId,
-        eventId: uniqueEventId,
-        eventName,
-        league: params.league,
-        outcome: params.outcome,
-        odds: params.odds,
-        amount: 1,
-        market: params.market,
-        scoringMode: 'score',
-        provider: params.provider,
-        providerFixtureId: String(params.event.fixtureId),
-        providerMarketId: params.providerMarketId,
-        marketLabel: params.marketLabel,
-        marketLine: params.marketLine,
-        bookmaker: params.bookmaker,
-        oddsLastUpdated: params.oddsLastUpdated,
-        homeTeam: params.event.homeTeam,
-        awayTeam: params.event.awayTeam,
-        predictedHomeScore: params.predictedHomeScore,
-        predictedAwayScore: params.predictedAwayScore,
-        matchDate: params.event.matchDate
-    };
-
-    try {
-        const result: any = await Bet.updateOne(
-            duplicateQuery,
-            { $setOnInsert: prediction },
-            { upsert: true }
-        );
-        if (!result.upsertedCount && !result.upsertedId) {
-            throw new Error(PREDICTION_DUPLICATE_ERROR);
-        }
-    } catch (err) {
-        if (isDuplicateKeyError(err)) {
-            throw new Error(PREDICTION_DUPLICATE_ERROR);
-        }
-        throw err;
-    }
-
-    return dbUser;
-}
-
-function predictionErrorMessage(err: unknown): string {
-    if (err instanceof Error && err.message === PREDICTION_DUPLICATE_ERROR) {
-        return 'You already have an active prediction for this exact outcome.';
-    }
-
-    if (err instanceof Error && err.message === PREDICTION_CLOSED_ERROR) {
-        return 'This match has already started, so new predictions are closed.';
-    }
-
-    return 'This bet is no longer available or the interaction expired.';
 }
 
 async function fetchTheOddsApiFixtureMarkets(
@@ -531,15 +386,15 @@ async function fetchTheOddsApiMatchWinnerOdds(
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('bet')
-        .setDescription('Show upcoming soccer events with API-Football match-winner odds.')
+        .setName('legacybet')
+        .setDescription('Legacy coin-based betting flow.')
         .addStringOption(option =>
             option.setName('search')
                 .setDescription('Search for a team or event name')
                 .setRequired(false)
         ),
     async execute(interaction: ChatInputCommandInteraction) {
-        await interaction.reply({ content: 'Check your DMs to make your prediction!', ephemeral: true });
+        await interaction.reply({ content: 'Check your DMs to place your bet!', ephemeral: true });
         const user = interaction.user;
         const dm = await user.createDM();
         const season = Number(process.env.API_FOOTBALL_SEASON) || getDefaultFootballSeason();
@@ -697,7 +552,7 @@ module.exports = {
 
                         console.log(`[BetFlow] Preparing bet buttons for ${teams}; bookmaker=${event.bookmaker}; outcomes=${displayOutcomes.map((o) => `${o.outcome}:${o.odds}`).join(', ')}`);
                         await eventInteraction.message.edit({
-                            content: `**${teams}** (League: ${leagueMap[String(event.fixtureId)]})\nMatch Date: ${formatMatchDate(event.matchDate)}\nBookmaker: **${event.bookmaker}**\nProvider: **${event.provider}**\n\nYour score: **${formatScore(dbUser.score || 0)}** pts.\nEach prediction risks **-1** point. A win adds **odds - 1** points.\nClick an outcome below to make a prediction:`,
+                            content: `**${teams}** (League: ${leagueMap[String(event.fixtureId)]})\nMatch Date: ${formatMatchDate(event.matchDate)}\nBookmaker: **${event.bookmaker}**\nProvider: **${event.provider}**\n\nYou have **${dbUser.coins}** coins.\nClick an outcome below, then enter your bet amount:`,
                             components: componentRows
                         });
                         eventCollector?.stop('selected');
@@ -710,65 +565,21 @@ module.exports = {
                             time: 24 * 60 * 60 * 1000
                         });
                         collector?.on('collect', async (i) => {
+                            const modal = new ModalBuilder()
+                                .setCustomId(i.customId.replace('bet2|', 'betmodal2|'))
+                                .setTitle('Place Your Bet');
+                            const amountInput = new TextInputBuilder()
+                                .setCustomId('bet_amount')
+                                .setLabel('Enter amount to bet')
+                                .setStyle(TextInputStyle.Short)
+                                .setPlaceholder('e.g. 100')
+                                .setRequired(true);
+                            modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput));
                             try {
-                                const parsed = decodeBetButtonId(i.customId);
-                                const buttonLabel = (i.component as any).label || '';
-                                const odds = parseOddsFromLabel(buttonLabel);
-                                if (!parsed || !odds) {
-                                    await i.reply({ content: 'Could not read this prediction option.', ephemeral: true });
-                                    return;
-                                }
-
-                                const market = marketFromButtonCode(parsed.marketCode);
-                                const outcome = outcomeFromButtonChoice(parsed.choiceCode, event.homeTeam, event.awayTeam);
-                                const marketLabel = marketLabelFromButtonCode(parsed.marketCode);
-                                const providerMarketId = providerMarketIdFromButtonCode(parsed.marketCode);
-                                await createScorePrediction({
-                                    userId,
-                                    event,
-                                    league: leagueMap[String(event.fixtureId)] || event.leagueName,
-                                    outcome,
-                                    odds,
-                                    market,
-                                    provider: event.provider,
-                                    providerMarketId,
-                                    marketLabel,
-                                    marketLine: parsed.point,
-                                    bookmaker: event.bookmaker
-                                });
-
-                                const outcomeDisplay = market === 'total_goals' && typeof parsed.point === 'number'
-                                    ? `${marketLabel || 'Match goals'}: ${outcome} ${parsed.point}`
-                                    : marketLabel
-                                        ? `${marketLabel}: ${outcome}`
-                                        : outcome;
-
-                                try {
-                                    const channelId = process.env.NOTIFICATION_CHANNEL_ID;
-                                    if (channelId) {
-                                        const notifChannel = await interaction.client.channels.fetch(channelId);
-                                        if (notifChannel && notifChannel.isTextBased() && 'send' in notifChannel) {
-                                            await (notifChannel as any).send({
-                                                content: `📝 <@${userId}> made a prediction: **${outcomeDisplay}** (${odds.toFixed(2)}) for **${teams}** (${leagueMap[String(event.fixtureId)] || event.leagueName})`
-                                            });
-                                        }
-                                    }
-                                } catch (err) {
-                                    console.error('Failed to send prediction notification:', err);
-                                }
-
-                                await i.reply({
-                                    content: `Prediction saved: **${outcomeDisplay}** (${odds.toFixed(2)}) for **${teams}**. Win: **+${formatScore(odds - 1)}** pts, loss: **-1** pt.`,
-                                    ephemeral: true
-                                });
+                                await i.showModal(modal);
                             } catch (err) {
                                 try {
-                                    const content = predictionErrorMessage(err);
-                                    if (i.deferred || i.replied) {
-                                        await i.editReply({ content });
-                                    } else {
-                                        await i.reply({ content, ephemeral: true });
-                                    }
+                                    await i.reply({ content: 'This bet is no longer available or the interaction expired.', ephemeral: true });
                                 } catch {}
                             }
                         });
@@ -790,31 +601,73 @@ module.exports = {
 
                                 const homeScore = Number(scoreMatch[1]);
                                 const awayScore = Number(scoreMatch[2]);
+                                const modal = new ModalBuilder()
+                                    .setCustomId(`exactscoremodal|${Date.now()}`)
+                                    .setTitle('Place Exact Score Bet');
+                                const amountInput = new TextInputBuilder()
+                                    .setCustomId('bet_amount')
+                                    .setLabel(`Amount for ${homeScore}-${awayScore}`)
+                                    .setStyle(TextInputStyle.Short)
+                                    .setPlaceholder('e.g. 100')
+                                    .setRequired(true);
+                                modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput));
+
                                 try {
-                                    await i.deferReply({ ephemeral: true });
+                                    await i.showModal(modal);
+                                    const modalInteraction = await i.awaitModalSubmit({
+                                        filter: (submit) => submit.user.id === user.id && submit.customId === modal.data.custom_id,
+                                        time: 5 * 60 * 1000
+                                    });
+                                    await modalInteraction.deferReply({ ephemeral: true });
+
+                                    const amount = parseInt(modalInteraction.fields.getTextInputValue('bet_amount'), 10);
+                                    if (Number.isNaN(amount) || amount <= 0) {
+                                        await modalInteraction.editReply({ content: 'Invalid bet amount.' });
+                                        return;
+                                    }
 
                                     const latestOdd = await findLatestExactScoreOdd(event, homeScore, awayScore);
                                     if (!latestOdd) {
-                                        await i.editReply({
+                                        await modalInteraction.editReply({
                                             content: `No current OddsChecker Correct Score odds found for **${homeScore}-${awayScore}**.`
                                         });
                                         return;
                                     }
 
-                                    await createScorePrediction({
+                                    await connectMongo();
+                                    let currentUser = await User.findOne({ userId });
+                                    if (!currentUser) currentUser = await User.create({ userId });
+                                    if (currentUser.coins < amount) {
+                                        await modalInteraction.editReply({ content: `You do not have enough coins. You have **${currentUser.coins}**.` });
+                                        return;
+                                    }
+
+                                    currentUser.coins -= amount;
+                                    await currentUser.save();
+
+                                    const eventName = `${event.homeTeam} vs ${event.awayTeam}`;
+                                    const uniqueEventId = `${event.fixtureId}_${eventName.replace(/\s+/g, '_')}`;
+                                    const { Bet } = require('../db/bet');
+                                    await Bet.create({
                                         userId,
-                                        event,
+                                        eventId: uniqueEventId,
+                                        eventName,
                                         league: leagueMap[String(event.fixtureId)] || event.leagueName,
                                         outcome: latestOdd.outcome,
                                         odds: latestOdd.odds,
+                                        amount,
                                         market: 'exact_score',
                                         provider: 'oddschecker',
+                                        providerFixtureId: String(event.fixtureId),
                                         providerMarketId: String(latestOdd.marketId),
                                         marketLabel: 'Correct Score',
                                         bookmaker: latestOdd.bookmaker,
                                         oddsLastUpdated: latestOdd.updatedAt,
+                                        homeTeam: event.homeTeam,
+                                        awayTeam: event.awayTeam,
                                         predictedHomeScore: homeScore,
                                         predictedAwayScore: awayScore,
+                                        matchDate: event.matchDate
                                     });
 
                                     try {
@@ -823,7 +676,7 @@ module.exports = {
                                             const notifChannel = await interaction.client.channels.fetch(channelId);
                                             if (notifChannel && notifChannel.isTextBased() && 'send' in notifChannel) {
                                                 await (notifChannel as any).send({
-                                                    content: `📝 <@${userId}> made an exact-score prediction: **${event.homeTeam} ${homeScore}-${awayScore} ${event.awayTeam}** (${latestOdd.odds.toFixed(2)}) via **${latestOdd.bookmaker}**`
+                                                    content: `📝 <@${userId}> placed an exact-score bet: **${amount}** coins on **${event.homeTeam} ${homeScore}-${awayScore} ${event.awayTeam}** (${latestOdd.odds.toFixed(2)}) via **${latestOdd.bookmaker}**`
                                                 });
                                             }
                                         }
@@ -831,16 +684,21 @@ module.exports = {
                                         console.error('Failed to send exact-score bet notification:', err);
                                     }
 
-                                    await i.editReply({
-                                        content: `Exact-score prediction saved: **${event.homeTeam} ${homeScore}-${awayScore} ${event.awayTeam}** at **${latestOdd.odds.toFixed(2)}** from **${latestOdd.bookmaker}**. Win: **+${formatScore(latestOdd.odds - 1)}** pts, loss: **-1** pt.`
+                                    const newContent = eventInteraction.message.content.replace(
+                                        /You have \*\*[^*]+\*\* coins\./,
+                                        `You have **${currentUser.coins}** coins.`
+                                    );
+                                    try {
+                                        await eventInteraction.message.edit({ content: newContent, components: componentRows });
+                                    } catch {}
+
+                                    await modalInteraction.editReply({
+                                        content: `Exact-score bet placed: **${amount}** coins on **${event.homeTeam} ${homeScore}-${awayScore} ${event.awayTeam}** at **${latestOdd.odds.toFixed(2)}** from **${latestOdd.bookmaker}**.`
                                     });
                                 } catch (err) {
                                     try {
-                                        const content = predictionErrorMessage(err);
-                                        if (i.deferred || i.replied) {
-                                            await i.editReply({ content });
-                                        } else {
-                                            await i.reply({ content, ephemeral: true });
+                                        if (!i.replied) {
+                                            await i.reply({ content: 'This exact-score bet session expired. Run `/bet` again.', ephemeral: true });
                                         }
                                     } catch {}
                                 }

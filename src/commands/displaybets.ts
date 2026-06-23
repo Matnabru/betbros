@@ -1,6 +1,8 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, User as DiscordUser } from 'discord.js';
 import { connectMongo } from '../db/mongo';
 import { Bet } from '../db/bet';
+import { formatBetOutcome } from '../utils/formatBet';
+import { formatScore } from '../utils/scoreSettlement';
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -77,9 +79,14 @@ module.exports = {
       const header = `**${event.eventName}**${dateStr ? ` (${dateStr})` : ''}`;
       const betLines = event.bets.map((bet, i) => {
         const name = event.usernames[i].padEnd(12);
-        const amount = bet.amount.toString().padStart(4);
-        const outcome = bet.outcome.padEnd(20);
+        const outcome = formatBetOutcome(bet).padEnd(28);
         const odds = `(${bet.odds})`.padStart(6);
+        if (bet.scoringMode === 'score') {
+          const win = `+${formatScore(bet.odds - 1)}`.padStart(6);
+          return `${name} ${outcome} ${odds} win ${win} / lose -1`;
+        }
+
+        const amount = bet.amount.toString().padStart(4);
         return `${name} ${amount} ${outcome} ${odds}`;
       }).join('\n');
       

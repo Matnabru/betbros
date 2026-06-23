@@ -10,8 +10,8 @@ function getSkewedRandom(min: number, max: number, skew: number = 2): number {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('opencrate')
-    .setDescription('Open a crate from your inventory to get coins!'),
+    .setName('legacyopencrate')
+    .setDescription('Legacy open a crate from your inventory for coins.'),
   async execute(interaction: ChatInputCommandInteraction) {
     await connectMongo();
     const userId = interaction.user.id;

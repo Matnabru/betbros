@@ -8,8 +8,8 @@ dotenv.config();
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('createcustombet')
-        .setDescription('Create a custom bet event (admin only)'),
+        .setName('legacycreatecustombet')
+        .setDescription('Legacy create a custom coin bet event (admin only)'),
     async execute(interaction: ChatInputCommandInteraction) {
         if (interaction.user.id !== process.env.ADMIN_USER_ID) {
             await interaction.reply({ content: 'You are not authorized to use this command.', ephemeral: true });

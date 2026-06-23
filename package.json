@@ -4,10 +4,12 @@
   "description": "Discord bot for custom and standard betting, lootboxes, inventory, and leaderboards.",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/clean-dist.js && tsc",
     "start": "npm run build && node dist/index.js",
+    "start:dev": "node scripts/dev-watch.js",
     "fix-eventids": "tsc fix-duplicate-eventids.ts && node fix-duplicate-eventids.js",
-    "register": "tsc && node dist/register-commands.js"
+    "register": "npm run build && node dist/register-commands.js",
+    "test:bet-resolution": "npm run build && node dist/test-bet-resolution.js"
   },
   "author": "",
   "license": "MIT",

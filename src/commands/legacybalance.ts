@@ -1,12 +1,11 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
 import { connectMongo } from '../db/mongo';
 import { User } from '../db/user';
-import { formatScore } from '../utils/scoreSettlement';
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('balance')
-    .setDescription('Show your prediction score.'),
+    .setName('legacybalance')
+    .setDescription('Show your legacy coin balance.'),
   async execute(interaction: ChatInputCommandInteraction) {
     await connectMongo();
     const userId = interaction.user.id;
@@ -14,6 +13,6 @@ module.exports = {
     if (!user) {
       user = await User.create({ userId });
     }
-  await interaction.reply({ content: `Your prediction score is **${formatScore(user.score || 0)}** pts.`, flags: 64 });
+  await interaction.reply({ content: `You have **${user.coins}** coins.`, flags: 64 });
   },
 };

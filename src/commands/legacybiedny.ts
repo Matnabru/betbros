@@ -5,8 +5,8 @@ import { Bet } from '../db/bet';
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('biedny')
-    .setDescription('Get 250 coins if you have 0 coins and no active bets'),
+    .setName('legacybiedny')
+    .setDescription('Legacy coin bailout if you have 0 coins and no active bets.'),
   async execute(interaction: ChatInputCommandInteraction) {
     await connectMongo();
 
@@ -20,14 +20,14 @@ module.exports = {
 
     // Check if user has 0 coins
     if (user.coins !== 0) {
-      await interaction.reply({ content: `Masz jeszcze ${user.coins} monet. Komenda /biedny jest tylko dla tych, którzy mają 0 monet!`, ephemeral: true });
+      await interaction.reply({ content: `Masz jeszcze ${user.coins} monet. Komenda /legacybiedny jest tylko dla tych, którzy mają 0 monet!`, ephemeral: true });
       return;
     }
 
     // Check if user has active bets
     const activeBets = await Bet.find({ userId, resolved: false });
     if (activeBets.length > 0) {
-      await interaction.reply({ content: `Masz ${activeBets.length} aktywnych zakładów. Komenda /biedny jest dostępna tylko gdy nie masz aktywnych zakładów!`, ephemeral: true });
+      await interaction.reply({ content: `Masz ${activeBets.length} aktywnych zakładów. Komenda /legacybiedny jest dostępna tylko gdy nie masz aktywnych zakładów!`, ephemeral: true });
       return;
     }
 

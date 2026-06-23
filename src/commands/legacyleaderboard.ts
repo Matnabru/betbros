@@ -2,28 +2,30 @@ import { SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
 import { connectMongo } from '../db/mongo';
 import { User } from '../db/user';
 import { Bet } from '../db/bet';
-import { formatScore } from '../utils/scoreSettlement';
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('leaderboard')
-    .setDescription('Show the top 10 users by prediction score.'),
+    .setName('legacyleaderboard')
+    .setDescription('Show the legacy top 10 users by coin balance.'),
   async execute(interaction: ChatInputCommandInteraction) {
     await connectMongo();
-    const users = await User.find({ score: { $ne: 0 } });
+    const users = await User.find();
     if (!users.length) {
-      await interaction.reply('No leaderboard entries yet.');
+      await interaction.reply('No users found.');
       return;
     }
+    // For each user, get the sum of unresolved bet amounts
     const userIds = users.map(u => u.userId);
     const bets = await Bet.aggregate([
-      { $match: { userId: { $in: userIds }, resolved: false, scoringMode: 'score' } },
-      { $group: { _id: '$userId', active: { $sum: 1 } } }
+      { $match: { userId: { $in: userIds }, resolved: false } },
+      { $group: { _id: '$userId', locked: { $sum: '$amount' } } }
     ]);
-    const activeMap = new Map(bets.map(b => [b._id, b.active]));
+    const lockedMap = new Map(bets.map(b => [b._id, b.locked]));
+    // Compute total for each user and sort by total descending
     const usersWithTotals = users.map(u => {
-      const active = activeMap.get(u.userId) || 0;
-      return { ...u.toObject(), active, total: u.score || 0 };
+      const locked = lockedMap.get(u.userId) || 0;
+      const total = u.coins + locked;
+      return { ...u.toObject(), locked, total };
     });
     usersWithTotals.sort((a, b) => b.total - a.total);
     const topUsers = usersWithTotals.slice(0, 10);
@@ -38,8 +40,8 @@ module.exports = {
     }));
     let desc = topUsers.map((u, i) => {
       const nickname = nicknames[i];
-      return `#${i + 1} ${nickname} — **${formatScore(u.total)}** pts${u.active > 0 ? ` (${u.active} active)` : ''}`;
+      return `#${i + 1} ${nickname} — **${u.total}**${u.locked > 0 ? ` (**${u.locked}**)` : ''}`;
     }).join('\n');
-    await interaction.reply({ content: `**Prediction Leaderboard:**\n${desc}` });
+    await interaction.reply({ content: `**Leaderboard:** **Total** (In bets)\n${desc}` });
   },
 };

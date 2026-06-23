@@ -1,8 +1,15 @@
 import fetch from 'node-fetch';
+import dotenv from 'dotenv';
 
-const apiKey = '72e2a0d1bbcfb50a7dd0eb4d2cbfcf9d'; // Your API-Football key
+dotenv.config();
+
+const apiKey = process.env.API_FOOTBALL_KEY || process.env.API_SPORTS_KEY;
 
 async function fetchLeagues() {
+    if (!apiKey) {
+        throw new Error('API_FOOTBALL_KEY is not set');
+    }
+
     try {
         const res = await fetch('https://v3.football.api-sports.io/leagues', {
             method: 'GET',

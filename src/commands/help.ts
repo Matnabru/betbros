@@ -7,35 +7,31 @@ module.exports = {
   async execute(interaction: ChatInputCommandInteraction) {
     const helpMessage = `# 🎯 **BetBros Bot - Instrukcja**
 
-## 🏆 **Podstawowe Komendy Zakładów**
+## 🏆 **Predykcje**
 
-### \`/balance\` - Sprawdź saldo
+### \`/balance\` - Sprawdź swój wynik
 
-### \`/bet\` - Postaw zakład (bot wysyła formularz w DM)
-### \`/mybets\` - Twoje zakłady
-### \`/bets\` - Zakłady wszystkich
+### \`/bet\` - Wybierz mecz i predykcję (bot wysyła opcje w DM)
+### \`/mybets\` - Twoje aktywne predykcje
+### \`/bets\` - Aktywne predykcje wszystkich
 
 ## 📊 **Ranking i Statystyki**
-### \`/leaderboard\` - Ranking graczy
+### \`/leaderboard\` - Ranking według wyniku
 
-## 🎁 **System Skrzynek**
+## 💰 **Zasady Punktacji**
 
-### \`/crate\` - Odbierz skrzynkę raz w tygodniu
-### \`/opencrate\` - Otwórz skrzynkę
-• **Nagrody:** Monety (1-200)
-
-## 💰 **Zasady Ekonomii**
-
-• **Start:** Każdy nowy gracz otrzymuje 1000 monet
-• **Zakłady:** Minimalna kwota zależy od kursu
-• **Wypłaty:** Wygrana = Postawiona kwota × Kurs
+• **Start:** Każdy gracz zaczyna od 0 punktów
+• **Przegrana:** -1 punkt
+• **Wygrana:** kurs - 1 punktów
+• **Zwrot:** 0 punktów
 
 ## ⚽ **Rozstrzyganie Zakładów**
 
-• Zakłady są automatycznie rozstrzygane co godzinę
+• Predykcje są automatycznie rozstrzygane co godzinę
+• Stare komendy monetowe są dostępne z prefixem \`legacy\`, np. \`/legacybet\`
 
 ---
-**🎮 Powodzenia w zakładach! 🎮**`;
+**🎮 Powodzenia w typowaniu! 🎮**`;
 
     await interaction.reply({ content: helpMessage });
   },

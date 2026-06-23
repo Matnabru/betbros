@@ -6,8 +6,8 @@ import { User } from '../db/user';
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('custombet')
-        .setDescription('Place a bet on a custom event'),
+        .setName('legacycustombet')
+        .setDescription('Legacy place a coin bet on a custom event'),
     async execute(interaction: ChatInputCommandInteraction) {
         await interaction.reply({ content: 'Check your DMs to place your custom bet!', ephemeral: true });
         const user = interaction.user;
@@ -38,7 +38,7 @@ module.exports = {
 
         const eventRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(eventMenu);
 
-        await dm.send({
+        const eventPrompt = await dm.send({
             content: 'Select the custom bet event:',
             components: [eventRow]
         });
@@ -47,15 +47,16 @@ module.exports = {
         const eventCollector = dm.createMessageComponentCollector({
             filter: (i) => i.isStringSelectMenu() && i.user.id === user.id && i.customId === 'select_custom_event',
             componentType: ComponentType.StringSelect,
-            time: 60000
+            time: 15 * 60 * 1000
         });
 
         eventCollector.once('collect', async (eventInteraction: StringSelectMenuInteraction) => {
+            await eventInteraction.deferUpdate();
             const customEventId = eventInteraction.values[0];
             const event = activeEvents.find(e => e.customEventId === customEventId);
 
             if (!event) {
-                await eventInteraction.update({ content: 'Event not found.', components: [] });
+                await eventInteraction.message.edit({ content: 'Event not found.', components: [] });
                 return;
             }
 
@@ -95,20 +96,20 @@ module.exports = {
                 );
             });
 
-            await eventInteraction.update({
+            await eventInteraction.message.edit({
                 content: `**${event.title}**\nYou have **${dbUser.coins}** coins.\nCurrent total pool: **${totalPool}** coins\nEnter your bet amount and click a button to bet:`,
                 components: [row]
             });
+            eventCollector.stop('selected');
 
             // Listen for bet button clicks
             const collector = dm.createMessageComponentCollector({
-                filter: (i) => i.isButton() && i.user.id === user.id,
+                filter: (i) => i.isButton() && i.user.id === user.id && i.customId.startsWith('custombet_'),
                 componentType: ComponentType.Button,
                 time: 24 * 60 * 60 * 1000
             });
 
             let lastOutcomes = event.outcomes;
-            let lastEventInteraction = eventInteraction;
 
             collector.on('collect', async (i) => {
                 const idx = parseInt(i.customId.replace('custombet_', ''));
@@ -135,7 +136,6 @@ module.exports = {
                     } catch {}
                 }
 
-                lastEventInteraction = eventInteraction;
                 lastOutcomes = event.outcomes;
             });
 
@@ -151,9 +151,20 @@ module.exports = {
                                 .setDisabled(true)
                         );
                     });
-                    await lastEventInteraction.editReply({ components: [disabledRow] });
+                    await eventInteraction.message.edit({ components: [disabledRow] });
                 } catch {}
             });
+        });
+
+        eventCollector.on('end', async (_collected, reason) => {
+            if (reason === 'selected') return;
+
+            try {
+                await eventPrompt.edit({
+                    content: 'This custom bet session expired. Run `/legacycustombet` again to start a new one.',
+                    components: []
+                });
+            } catch {}
         });
     }
 };

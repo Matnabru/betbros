@@ -1,7 +1,89 @@
 import { Client, Interaction, ModalSubmitInteraction } from 'discord.js';
 import dotenv from 'dotenv';
+import { decodeBetModalId, encodeBetButtonId } from '../utils/betButtonIds';
 
 dotenv.config();
+
+function marketFromButtonCode(marketCode: string): 'match_winner' | 'draw_no_bet' | 'btts' | 'total_goals' {
+    if (marketCode === 'dnb') return 'draw_no_bet';
+    if (marketCode === 'btts') return 'btts';
+    if (marketCode === 'tot' || marketCode === 'atot') return 'total_goals';
+    return 'match_winner';
+}
+
+function providerMarketIdFromButtonCode(marketCode: string): string {
+    if (marketCode === 'dnb') return 'draw_no_bet';
+    if (marketCode === 'btts') return 'btts';
+    if (marketCode === 'tot') return 'totals';
+    if (marketCode === 'atot') return 'alternate_totals';
+    return 'h2h';
+}
+
+function marketLabelFromButtonCode(marketCode: string): string | undefined {
+    if (marketCode === 'dnb') return 'Draw no bet';
+    if (marketCode === 'btts') return 'Both teams to score';
+    if (marketCode === 'tot') return 'Match goals';
+    if (marketCode === 'atot') return 'More match goals';
+    return undefined;
+}
+
+function outcomeFromButtonChoice(
+    choiceCode: string,
+    homeTeam?: string,
+    awayTeam?: string
+): string {
+    if (choiceCode === 'h') return homeTeam || 'Home';
+    if (choiceCode === 'd') return 'Draw';
+    if (choiceCode === 'a') return awayTeam || 'Away';
+    if (choiceCode === 'y') return 'Yes';
+    if (choiceCode === 'n') return 'No';
+    if (choiceCode === 'o') return 'Over';
+    if (choiceCode === 'u') return 'Under';
+    return 'Unknown';
+}
+
+function findButtonLabel(message: any, customId: string, fallbackIndex?: string): string {
+    for (const row of message.components || []) {
+        for (const component of row.components || []) {
+            const data = component.data || component;
+            if (data.custom_id === customId || data.customId === customId) {
+                return data.label || component.label || '';
+            }
+        }
+    }
+
+    if (fallbackIndex !== undefined) {
+        const firstRow = message.components?.[0];
+        const component = firstRow?.components?.[parseInt(fallbackIndex, 10)];
+        return component?.label || component?.data?.label || '';
+    }
+
+    return '';
+}
+
+async function acknowledgeModal(interaction: ModalSubmitInteraction): Promise<boolean> {
+    if (interaction.deferred || interaction.replied) return true;
+
+    try {
+        await interaction.deferReply({ ephemeral: true });
+        return true;
+    } catch (err) {
+        console.error('Failed to acknowledge modal interaction:', err);
+        return false;
+    }
+}
+
+async function safeModalReply(interaction: ModalSubmitInteraction, content: string) {
+    try {
+        if (interaction.deferred || interaction.replied) {
+            await interaction.editReply({ content });
+        } else {
+            await interaction.reply({ content, ephemeral: true });
+        }
+    } catch (err) {
+        console.error('Failed to respond to modal interaction:', err);
+    }
+}
 
 module.exports = {
     name: 'interactionCreate',
@@ -22,60 +104,88 @@ module.exports = {
             }
         } else if (interaction.isModalSubmit()) {
             // Handle bet modal from showodds
-            if (interaction.customId.startsWith('betmodal_')) {
-                // Defensive: If interaction is expired, catch and inform user
-                let responded = false;
-                function safeReply(opts: any) {
-                    if (responded) return;
-                    responded = true;
-                    return (interaction as any).reply(opts).catch(() => {
-                        // If reply fails, try followUp (if possible)
-                        try { (interaction as any).followUp(opts); } catch {}
-                    });
-                }
+            if (interaction.customId.startsWith('betmodal_') || interaction.customId.startsWith('betmodal2|')) {
+                if (!(await acknowledgeModal(interaction))) return;
+                const safeReply = (content: string) => safeModalReply(interaction, content);
+                const parsedButtonBet = decodeBetModalId(interaction.customId);
                 const parts = interaction.customId.split('_');
-                const eventId = parts[1];
-                const outcomeIdx = parts[2];
-                const timestamp = parts[3] ? parseInt(parts[3]) : 0;
+                let provider = 'api-football';
+                let eventId = parts[1];
+                let outcomeIdx = parts[2];
+                let timestamp = parts[3] ? parseInt(parts[3]) : 0;
+                if (parts.length >= 5 && ['api-football', 'the-odds-api'].includes(parts[1])) {
+                    provider = parts[1];
+                    eventId = parts[2];
+                    outcomeIdx = parts[3];
+                    timestamp = parts[4] ? parseInt(parts[4]) : 0;
+                }
+                if (parsedButtonBet) {
+                    provider = parsedButtonBet.provider;
+                    eventId = parsedButtonBet.eventId;
+                    outcomeIdx = String(parsedButtonBet.index);
+                    timestamp = parsedButtonBet.timestamp;
+                }
                 
                 const amountStr = interaction.fields.getTextInputValue('bet_amount');
                 const amount = parseInt(amountStr);
                 if (isNaN(amount) || amount <= 0) {
-                    await safeReply({ content: 'Invalid bet amount.', ephemeral: true });
+                    await safeReply('Invalid bet amount.');
                     return;
                 }
                 // Find the original message to get event/outcome info
                 if (!interaction.message) {
-                    await safeReply({ content: 'Could not find bet message.', ephemeral: true });
+                    await safeReply('Could not find bet message.');
                     return;
                 }
                 const msg = await interaction.channel?.messages.fetch(interaction.message.id);
                 if (!msg) {
-                    await safeReply({ content: 'Could not find bet message.', ephemeral: true });
+                    await safeReply('Could not find bet message.');
                     return;
                 }
                 // Extract event info from message content (hacky, but works for now)
                 const content = msg.content;
                 const eventMatch = content.match(/\*\*(.+)\*\* \(League: (.+)\)/);
                 if (!eventMatch) {
-                    await safeReply({ content: 'Could not parse event info.', ephemeral: true });
+                    await safeReply('Could not parse event info.');
                     return;
                 }
                 const eventName = eventMatch[1];
                 const league = eventMatch[2];
+                const bookmaker = content.match(/Bookmaker:\s+\*\*(.+?)\*\*/)?.[1];
+                const teamsMatch = eventName.match(/(.+) vs (.+)/i);
+                const homeTeam = teamsMatch ? teamsMatch[1].trim() : undefined;
+                const awayTeam = teamsMatch ? teamsMatch[2].trim() : undefined;
                 // Get match date from timestamp in customId
                 const matchDate = timestamp > 0 ? new Date(timestamp * 1000) : undefined;
-                // Get outcome name and odds from button label
-                const { ActionRowBuilder, ButtonBuilder } = require('discord.js');
-                const row = msg.components[0] as InstanceType<typeof ActionRowBuilder>;
-                const btn = row.components[parseInt(outcomeIdx)] as InstanceType<typeof ButtonBuilder>;
-                const label = btn.label || btn.data?.label || '';
-                const outcomeMatch = label.match(/(.+) \((\d+(?:\.\d+)?)\)/);
+                const sourceButtonId = parsedButtonBet
+                    ? encodeBetButtonId(parsedButtonBet)
+                    : undefined;
+                const label = sourceButtonId
+                    ? findButtonLabel(msg, sourceButtonId)
+                    : findButtonLabel(msg, '', outcomeIdx);
+                const outcomeMatch = label.match(/(.+) \((\d+(?:\.\d+)?)\)$/);
                 if (!outcomeMatch) {
-                    await safeReply({ content: 'Could not parse outcome info.', ephemeral: true });
+                    await safeReply('Could not parse outcome info.');
                     return;
                 }
-                const outcome = outcomeMatch[1];
+                const market = parsedButtonBet
+                    ? marketFromButtonCode(parsedButtonBet.marketCode)
+                    : 'match_winner';
+                const outcome = parsedButtonBet
+                    ? outcomeFromButtonChoice(parsedButtonBet.choiceCode, homeTeam, awayTeam)
+                    : outcomeMatch[1];
+                const marketLine = parsedButtonBet?.point;
+                const providerMarketId = parsedButtonBet
+                    ? providerMarketIdFromButtonCode(parsedButtonBet.marketCode)
+                    : undefined;
+                const marketLabel = parsedButtonBet
+                    ? marketLabelFromButtonCode(parsedButtonBet.marketCode)
+                    : undefined;
+                const outcomeDisplay = market === 'total_goals' && typeof marketLine === 'number'
+                    ? `${marketLabel || 'Match goals'}: ${outcome} ${marketLine}`
+                    : marketLabel
+                        ? `${marketLabel}: ${outcome}`
+                        : outcome;
                 const odds = parseFloat(outcomeMatch[2]);
                 // Mongo
                 const { connectMongo } = require('../db/mongo');
@@ -85,7 +195,7 @@ module.exports = {
                 let user = await User.findOne({ userId: interaction.user.id });
                 if (!user) user = await User.create({ userId: interaction.user.id });
                 if (user.coins < amount) {
-                    await safeReply({ content: `You do not have enough coins. You have **${user.coins}**.`, ephemeral: true });
+                    await safeReply(`You do not have enough coins. You have **${user.coins}**.`);
                     return;
                 }
                 user.coins -= amount;
@@ -101,6 +211,15 @@ module.exports = {
                     outcome,
                     odds,
                     amount,
+                    market,
+                    provider,
+                    providerFixtureId: eventId,
+                    providerMarketId,
+                    marketLabel,
+                    marketLine,
+                    bookmaker,
+                    homeTeam,
+                    awayTeam,
                     matchDate
                 });
                 // Send bet notification to the specified channel
@@ -113,26 +232,22 @@ module.exports = {
                     const notifChannel = await interaction.client.channels.fetch(channelId);
                     if (notifChannel && notifChannel.isTextBased() && 'send' in notifChannel) {
                         await (notifChannel as any).send({
-                            content: `📝 <@${interaction.user.id}> placed a bet: **${amount}** coins on **${outcome}** (${odds}) for **${eventName}** (${league})`
+                            content: `📝 <@${interaction.user.id}> placed a bet: **${amount}** coins on **${outcomeDisplay}** (${odds}) for **${eventName}** (${league})`
                         });
                     }
                 } catch (e) { console.error('Failed to send bet notification:', e); }
-                // Update the original message to refresh coin balance and keep buttons enabled
-                const dateInfo = matchDate ? `\nMatch Date: ${matchDate.toLocaleString('pl-PL', { 
-                    timeZone: 'Europe/Warsaw',
-                    day: 'numeric',
-                    month: 'long',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                })}` : '';
-                const newContent = `**${eventName}** (League: ${league})${dateInfo}\nYou have **${user.coins}** coins.\nEnter your bet amount and click a button to bet:`;
+                const newContent = content.replace(
+                    /You have \*\*[^*]+\*\* coins\./,
+                    `You have **${user.coins}** coins.`
+                );
                 try {
                     await msg.edit({ content: newContent, components: msg.components });
                 } catch {}
-                await safeReply({ content: `Bet placed: **${amount}** coins on **${outcome}** (${odds}) for ${eventName} (${league}).`, ephemeral: true });
+                await safeReply(`Bet placed: **${amount}** coins on **${outcomeDisplay}** (${odds}) for ${eventName} (${league}).`);
             }
             // Handle custom bet creation modal
             else if (interaction.customId === 'create_custom_bet_modal') {
+                if (!(await acknowledgeModal(interaction))) return;
                 const { connectMongo } = require('../db/mongo');
                 const { CustomEvent } = require('../db/customEvent');
                 const { CustomBet } = require('../db/customBet');
@@ -143,7 +258,7 @@ module.exports = {
                 const outcomes = outcomesStr.split(',').map(o => o.trim()).filter(o => o.length > 0);
 
                 if (outcomes.length < 2) {
-                    await interaction.reply({ content: 'You must provide at least 2 outcomes.', ephemeral: true });
+                    await safeModalReply(interaction, 'You must provide at least 2 outcomes.');
                     return;
                 }
 
@@ -177,7 +292,7 @@ module.exports = {
                             message += `**${title}**\n`;
                             message += `📊 Outcomes: ${outcomes.join(', ')}\n`;
                             message += `💰 Initial pool: ${100 * outcomes.length} coins (100 coins on each outcome)\n`;
-                            message += `\nUse \`/custombet\` to place your bet!`;
+                            message += `\nUse \`/legacycustombet\` to place your bet!`;
                             
                             await (notifChannel as any).send({ content: message });
                         }
@@ -186,18 +301,12 @@ module.exports = {
                     console.error('Failed to send custom bet creation notification:', err);
                 }
 
-                await interaction.reply({ content: `Custom bet created: **${title}**\nOutcomes: ${outcomes.join(', ')}\nInitial pool: ${100 * outcomes.length} coins`, ephemeral: true });
+                await safeModalReply(interaction, `Custom bet created: **${title}**\nOutcomes: ${outcomes.join(', ')}\nInitial pool: ${100 * outcomes.length} coins`);
             }
             // Handle custom bet placement modal
             else if (interaction.customId.startsWith('custombetmodal_')) {
-                let responded = false;
-                function safeReply(opts: any) {
-                    if (responded) return;
-                    responded = true;
-                    return (interaction as any).reply(opts).catch(() => {
-                        try { (interaction as any).followUp(opts); } catch {}
-                    });
-                }
+                if (!(await acknowledgeModal(interaction))) return;
+                const safeReply = (content: string) => safeModalReply(interaction, content);
 
                 // Parse customId: custombetmodal_${customEventId}_${idx}
                 // customEventId format: custom_${timestamp}_${random}
@@ -210,18 +319,18 @@ module.exports = {
                 const amount = parseInt(amountStr);
 
                 if (isNaN(amount) || amount <= 0) {
-                    await safeReply({ content: 'Invalid bet amount.', ephemeral: true });
+                    await safeReply('Invalid bet amount.');
                     return;
                 }
 
                 if (!interaction.message) {
-                    await safeReply({ content: 'Could not find bet message.', ephemeral: true });
+                    await safeReply('Could not find bet message.');
                     return;
                 }
 
                 const msg = await interaction.channel?.messages.fetch(interaction.message.id);
                 if (!msg) {
-                    await safeReply({ content: 'Could not find bet message.', ephemeral: true });
+                    await safeReply('Could not find bet message.');
                     return;
                 }
 
@@ -229,7 +338,7 @@ module.exports = {
                 const content = msg.content;
                 const titleMatch = content.match(/\*\*(.+)\*\*/);
                 if (!titleMatch) {
-                    await safeReply({ content: 'Could not parse event info.', ephemeral: true });
+                    await safeReply('Could not parse event info.');
                     return;
                 }
                 const customEventTitle = titleMatch[1];
@@ -243,18 +352,18 @@ module.exports = {
 
                 const event = await CustomEvent.findOne({ customEventId });
                 if (!event) {
-                    await safeReply({ content: 'Event not found.', ephemeral: true });
+                    await safeReply('Event not found.');
                     return;
                 }
 
                 if (event.resolved) {
-                    await safeReply({ content: 'This event has already been resolved.', ephemeral: true });
+                    await safeReply('This event has already been resolved.');
                     return;
                 }
 
                 const outcome = event.outcomes[parseInt(outcomeIdx)];
                 if (!outcome) {
-                    await safeReply({ content: 'Invalid outcome.', ephemeral: true });
+                    await safeReply('Invalid outcome.');
                     return;
                 }
 
@@ -262,7 +371,7 @@ module.exports = {
                 if (!user) user = await User.create({ userId: interaction.user.id });
 
                 if (user.coins < amount) {
-                    await safeReply({ content: `You do not have enough coins. You have **${user.coins}**.`, ephemeral: true });
+                    await safeReply(`You do not have enough coins. You have **${user.coins}**.`);
                     return;
                 }
 
@@ -319,7 +428,7 @@ module.exports = {
                     await msg.edit({ content: newContent, components: msg.components });
                 } catch {}
 
-                await safeReply({ content: `Custom bet placed: **${amount}** coins on **${outcome}** (${odds.toFixed(2)}x) for ${customEventTitle}.`, ephemeral: true });
+                await safeReply(`Custom bet placed: **${amount}** coins on **${outcome}** (${odds.toFixed(2)}x) for ${customEventTitle}.`);
             }
         }
     },

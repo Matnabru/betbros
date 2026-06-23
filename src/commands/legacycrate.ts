@@ -10,8 +10,8 @@ function getSkewedRandom(min: number, max: number, skew: number = 2): number {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('crate')
-    .setDescription('Claim and open your weekly crate for bonus coins!'),
+    .setName('legacycrate')
+    .setDescription('Legacy weekly crate for bonus coins.'),
   async execute(interaction: ChatInputCommandInteraction) {
     await connectMongo();
     const userId = interaction.user.id;
@@ -31,6 +31,6 @@ module.exports = {
     user.inventory.push({ type: 'crate', grantedAt: now });
     user.lastLootbox = now;
     await user.save();
-    await interaction.reply({ content: 'You received a crate! Use `/opencrate` to open it and get coins.', ephemeral: true });
+    await interaction.reply({ content: 'You received a crate! Use `/legacyopencrate` to open it and get coins.', ephemeral: true });
   },
 };
